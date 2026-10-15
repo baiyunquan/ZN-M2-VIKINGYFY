@@ -46,8 +46,8 @@ case "$ACTION" in
             echo "Error: Cannot read bootconfig device $DEV_BOOTCONFIG"
             exit 1
         fi
-        CURR_TARGET=$(hexdump -s 132 -n 20 -e '"%c"' "$DEV_BOOTCONFIG" 2>/dev/null | tr -d '\0 ' || echo "unknown")
-        CURR_AGE=$(hexdump -s 4 -n 4 -e '"%u"' "$DEV_BOOTCONFIG" 2>/dev/null || echo "0")
+        CURR_TARGET=$(hexdump -v -s 132 -n 20 -e '"%c"' "$DEV_BOOTCONFIG" 2>/dev/null | tr -d '\0 \r\n' || echo "unknown")
+        CURR_AGE=$(hexdump -v -s 4 -n 4 -e '"%u"' "$DEV_BOOTCONFIG" 2>/dev/null || echo "0")
         echo "=================================================="
         echo "       ZN-M2 Dual-Boot Status Information         "
         echo "=================================================="
@@ -85,7 +85,7 @@ fi
 dd if="$DEV_BOOTCONFIG" of="$TMP_IMG" bs=128k count=1 2>/dev/null
 
 # 2. Verify header magic (0xa0a1a2a3)
-MAGIC=$(hexdump -n 4 -e '"%02x"' "$TMP_IMG" 2>/dev/null)
+MAGIC=$(hexdump -v -n 4 -e '"%02x"' "$TMP_IMG" 2>/dev/null)
 if [ "$MAGIC" != "a0a1a2a3" ]; then
     echo "Error: BOOTCONFIG magic check failed ($MAGIC != a0a1a2a3). Aborting!"
     rm -f "$TMP_IMG"
@@ -93,7 +93,7 @@ if [ "$MAGIC" != "a0a1a2a3" ]; then
 fi
 
 # 3. Calculate and increment Age counter (Age + 1)
-CURR_AGE=$(hexdump -s 4 -n 4 -e '"%u"' "$TMP_IMG" 2>/dev/null)
+CURR_AGE=$(hexdump -v -s 4 -n 4 -e '"%u"' "$TMP_IMG" 2>/dev/null)
 NEW_AGE=$((CURR_AGE + 1))
 echo "[+] Current Age: $CURR_AGE -> New Age: $NEW_AGE"
 
@@ -111,8 +111,8 @@ if [ $PAD_LEN -gt 0 ]; then
 fi
 
 # 5. Verify the generated data structure
-VERIFY_TARGET=$(hexdump -s 132 -n 20 -e '"%c"' "$TMP_IMG" 2>/dev/null | tr -d '\0 ')
-VERIFY_AGE=$(hexdump -s 4 -n 4 -e '"%u"' "$TMP_IMG" 2>/dev/null)
+VERIFY_TARGET=$(hexdump -v -s 132 -n 20 -e '"%c"' "$TMP_IMG" 2>/dev/null | tr -d '\0 \r\n')
+VERIFY_AGE=$(hexdump -v -s 4 -n 4 -e '"%u"' "$TMP_IMG" 2>/dev/null)
 if [ "$VERIFY_TARGET" != "$TARGET" ] || [ "$VERIFY_AGE" != "$NEW_AGE" ]; then
     echo "Error: Generated image verification failed ($VERIFY_TARGET != $TARGET). Aborting!"
     rm -f "$TMP_IMG"
@@ -124,9 +124,9 @@ echo "[+] Verification passed (Target: $VERIFY_TARGET, Age: $VERIFY_AGE)"
 # 6. Write back to both 0:BOOTCONFIG and 0:BOOTCONFIG1
 if command -v mtd >/dev/null 2>&1; then
     echo "[*] Writing 0:BOOTCONFIG partition..."
-    mtd write "$TMP_IMG" "0:BOOTCONFIG" 2>/dev/null || dd if="$TMP_IMG" of="$DEV_BOOTCONFIG" bs=128k count=1 conv=fsync 2>/dev/null
+    mtd write "$TMP_IMG" "$DEV_BOOTCONFIG" 2>/dev/null || dd if="$TMP_IMG" of="$DEV_BOOTCONFIG" bs=128k count=1 conv=fsync 2>/dev/null
     echo "[*] Writing 0:BOOTCONFIG1 partition..."
-    mtd write "$TMP_IMG" "0:BOOTCONFIG1" 2>/dev/null || dd if="$TMP_IMG" of="$DEV_BOOTCONFIG1" bs=128k count=1 conv=fsync 2>/dev/null
+    mtd write "$TMP_IMG" "$DEV_BOOTCONFIG1" 2>/dev/null || dd if="$TMP_IMG" of="$DEV_BOOTCONFIG1" bs=128k count=1 conv=fsync 2>/dev/null
 else
     echo "[*] Writing $DEV_BOOTCONFIG and $DEV_BOOTCONFIG1 via dd..."
     dd if="$TMP_IMG" of="$DEV_BOOTCONFIG" bs=128k count=1 conv=fsync 2>/dev/null
