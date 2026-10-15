@@ -1,0 +1,29 @@
+#!/bin/sh
+
+. /lib/functions.sh
+
+case "$ACTION" in
+pressed)
+	[ -z "$SEEN" ] && SEEN=0
+	;;
+timeout)
+	;;
+released)
+	if [ "$SEEN" -ge 5 ]; then
+		logger -t "button-reset" "检测到长按复位键 $SEEN 秒，正在安全回退至原厂系统 (rootfs)..."
+		echo "FACTORY FALLBACK: Switching to stock firmware (rootfs)..." > /dev/console
+		if [ -x /sbin/dualboot ]; then
+			/sbin/dualboot stock
+		fi
+		sync
+		reboot &
+	elif [ "$SEEN" -ge 1 ]; then
+		logger -t "button-reset" "检测到短按复位键 $SEEN 秒，重启路由器..."
+		echo "REBOOT" > /dev/console
+		sync
+		reboot &
+	fi
+	;;
+esac
+
+return 0

@@ -68,3 +68,10 @@ if [[ "${WRT_TARGET^^}" == *"QUALCOMMAX"* ]]; then
 	#其他调整
 	echo "CONFIG_PACKAGE_kmod-usb-serial-qualcomm=y" >> ./.config
 fi
+
+# 复制自定义 files 目录到编译工作区 (确保 dualboot 与 reset 按键脚本打包入固件)
+if [ -d "$GITHUB_WORKSPACE/files" ]; then
+	cp -rf "$GITHUB_WORKSPACE/files" ./
+	chmod +x ./files/sbin/* ./files/etc/rc.button/* 2>/dev/null || true
+	echo "Custom files directory copied to wrt/files successfully!"
+fi

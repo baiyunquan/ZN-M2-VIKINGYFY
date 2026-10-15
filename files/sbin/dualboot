@@ -1,0 +1,144 @@
+#!/bin/sh
+# =========================================================
+# 兆能 ZN-M2 高通 IPQ6018 双系统切换工具 (Dual-Boot Switcher)
+# 支持在 系统 A (rootfs 原厂) 与 系统 B (rootfs_1 新系统) 间无缝切换
+# =========================================================
+
+set -e
+
+ACTION="${1:-status}"
+REBOOT_FLAG=0
+[ "$2" = "-r" ] || [ "$2" = "--reboot" ] && REBOOT_FLAG=1
+
+# 查找 BOOTCONFIG 分区对应的 MTD 设备
+find_mtd_device() {
+    part_label="$1"
+    if [ -f /proc/mtd ]; then
+        part_idx=$(grep "\"$part_label\"" /proc/mtd | awk -F: '{print $1}')
+        if [ -n "$part_idx" ]; then
+            echo "/dev/$part_idx"
+            return 0
+        fi
+    fi
+    # 默认兜底
+    if [ "$part_label" = "0:BOOTCONFIG" ]; then
+        echo "/dev/mtd2"
+    elif [ "$part_label" = "0:BOOTCONFIG1" ]; then
+        echo "/dev/mtd3"
+    fi
+}
+
+DEV_BOOTCONFIG=$(find_mtd_device "0:BOOTCONFIG")
+DEV_BOOTCONFIG1=$(find_mtd_device "0:BOOTCONFIG1")
+TMP_IMG="/tmp/bootconfig_work.bin"
+
+case "$ACTION" in
+    stock|to-stock)
+        TARGET="rootfs"
+        DESC="原厂系统 (Stock System - rootfs)"
+        ;;
+    openwrt|to-openwrt|immortalwrt)
+        TARGET="rootfs_1"
+        DESC="新系统 (ImmortalWrt - rootfs_1)"
+        ;;
+    status)
+        if [ ! -r "$DEV_BOOTCONFIG" ]; then
+            echo "错误: 无法读取引导配置设备 $DEV_BOOTCONFIG"
+            exit 1
+        fi
+        CURR_TARGET=$(hexdump -s 132 -n 20 -e '"%c"' "$DEV_BOOTCONFIG" 2>/dev/null | tr -d '\0 ' || echo "unknown")
+        CURR_AGE=$(hexdump -s 4 -n 4 -e '"%u"' "$DEV_BOOTCONFIG" 2>/dev/null || echo "0")
+        echo "=================================================="
+        echo "  兆能 ZN-M2 双系统状态 (Dual-Boot Status)"
+        echo "=================================================="
+        echo "当前设定的下次引导槽位: $CURR_TARGET"
+        echo "当前 BOOTCONFIG 计数器: $CURR_AGE"
+        echo ""
+        if [ "$CURR_TARGET" = "rootfs" ]; then
+            echo "-> 下次重启将启动: 系统 A (原厂系统 rootfs)"
+        elif [ "$CURR_TARGET" = "rootfs_1" ]; then
+            echo "-> 下次重启将启动: 系统 B (ImmortalWrt 新系统 rootfs_1)"
+        else
+            echo "-> 未知槽位标记: $CURR_TARGET"
+        fi
+        echo "=================================================="
+        echo "命令用法:"
+        echo "  dualboot stock [-r]    : 切换至原厂系统 (-r 立即重启)"
+        echo "  dualboot openwrt [-r]  : 切换至新固件   (-r 立即重启)"
+        echo "  dualboot status        : 查看当前双系统状态"
+        exit 0
+        ;;
+    *)
+        echo "用法: $0 {stock|openwrt|status} [-r|--reboot]"
+        exit 1
+        ;;
+esac
+
+echo "[*] 正在准备切换启动槽位至: $DESC ..."
+
+if [ ! -r "$DEV_BOOTCONFIG" ]; then
+    echo "错误: 无法访问 $DEV_BOOTCONFIG"
+    exit 1
+fi
+
+# 1. 复制当前 128KB 块到临时文件
+dd if="$DEV_BOOTCONFIG" of="$TMP_IMG" bs=128k count=1 2>/dev/null
+
+# 2. 验证头部魔数 (0xa0a1a2a3)
+MAGIC=$(hexdump -n 4 -e '"%02x"' "$TMP_IMG" 2>/dev/null)
+if [ "$MAGIC" != "a0a1a2a3" ]; then
+    echo "错误: BOOTCONFIG 校验失败 (魔数不匹配: $MAGIC != a0a1a2a3)，终止操作！"
+    rm -f "$TMP_IMG"
+    exit 1
+fi
+
+# 3. 计算并写入递增计数器 (Age + 1)
+CURR_AGE=$(hexdump -s 4 -n 4 -e '"%u"' "$TMP_IMG" 2>/dev/null)
+NEW_AGE=$((CURR_AGE + 1))
+echo "[+] 当前 Age: $CURR_AGE -> 新 Age: $NEW_AGE"
+
+b0=$(printf '%02x' $((NEW_AGE & 0xff)))
+b1=$(printf '%02x' $(((NEW_AGE >> 8) & 0xff)))
+b2=$(printf '%02x' $(((NEW_AGE >> 16) & 0xff)))
+b3=$(printf '%02x' $(((NEW_AGE >> 24) & 0xff)))
+echo -ne "\\x$b0\\x$b1\\x$b2\\x$b3" | dd of="$TMP_IMG" bs=1 seek=4 count=4 conv=notrunc 2>/dev/null
+
+# 4. 在偏移 132 (0x84) 处写入目标分区名，总长 20 字节，不足部分补零
+printf "%s" "$TARGET" | dd of="$TMP_IMG" bs=1 seek=132 count=${#TARGET} conv=notrunc 2>/dev/null
+PAD_LEN=$((20 - ${#TARGET}))
+if [ $PAD_LEN -gt 0 ]; then
+    dd if=/dev/zero of="$TMP_IMG" bs=1 seek=$((132 + ${#TARGET})) count=$PAD_LEN conv=notrunc 2>/dev/null
+fi
+
+# 5. 校验修改后的数据结构
+VERIFY_TARGET=$(hexdump -s 132 -n 20 -e '"%c"' "$TMP_IMG" 2>/dev/null | tr -d '\0 ')
+VERIFY_AGE=$(hexdump -s 4 -n 4 -e '"%u"' "$TMP_IMG" 2>/dev/null)
+if [ "$VERIFY_TARGET" != "$TARGET" ] || [ "$VERIFY_AGE" != "$NEW_AGE" ]; then
+    echo "错误: 镜像生成校验失败！($VERIFY_TARGET != $TARGET), 终止写入！"
+    rm -f "$TMP_IMG"
+    exit 1
+fi
+
+echo "[+] 结构校验通过 (目标: $VERIFY_TARGET, Age: $VERIFY_AGE)"
+
+# 6. 同时写入 0:BOOTCONFIG 与 0:BOOTCONFIG1
+if command -v mtd >/dev/null 2>&1; then
+    echo "[*] 正在写回 0:BOOTCONFIG 分区..."
+    mtd write "$TMP_IMG" "0:BOOTCONFIG" 2>/dev/null || dd if="$TMP_IMG" of="$DEV_BOOTCONFIG" bs=128k count=1 conv=fsync 2>/dev/null
+    echo "[*] 正在写回 0:BOOTCONFIG1 分区..."
+    mtd write "$TMP_IMG" "0:BOOTCONFIG1" 2>/dev/null || dd if="$TMP_IMG" of="$DEV_BOOTCONFIG1" bs=128k count=1 conv=fsync 2>/dev/null
+else
+    echo "[*] 使用 dd 写回 $DEV_BOOTCONFIG 与 $DEV_BOOTCONFIG1..."
+    dd if="$TMP_IMG" of="$DEV_BOOTCONFIG" bs=128k count=1 conv=fsync 2>/dev/null
+    dd if="$TMP_IMG" of="$DEV_BOOTCONFIG1" bs=128k count=1 conv=fsync 2>/dev/null
+fi
+
+sync
+rm -f "$TMP_IMG"
+echo "[✓] 切换完成！系统将在下次重启时进入: $DESC"
+
+if [ $REBOOT_FLAG -eq 1 ]; then
+    echo "[*] 正在立即重启路由器..."
+    sync
+    reboot
+fi
