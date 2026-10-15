@@ -85,8 +85,8 @@ fi
 dd if="$DEV_BOOTCONFIG" of="$TMP_IMG" bs=128k count=1 2>/dev/null
 
 # 2. Verify header magic (0xa0a1a2a3)
-MAGIC=$(hexdump -v -n 4 -e '"%02x"' "$TMP_IMG" 2>/dev/null)
-if [ "$MAGIC" != "a0a1a2a3" ]; then
+MAGIC=$(hexdump -v -n 4 -e '4/1 "%02x"' "$TMP_IMG" 2>/dev/null)
+if [ "$MAGIC" != "a0a1a2a3" ] && [ "$MAGIC" != "a3a2a1a0" ]; then
     echo "Error: BOOTCONFIG magic check failed ($MAGIC != a0a1a2a3). Aborting!"
     rm -f "$TMP_IMG"
     exit 1
