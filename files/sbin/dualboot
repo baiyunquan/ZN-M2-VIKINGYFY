@@ -14,7 +14,7 @@ REBOOT_FLAG=0
 find_mtd_device() {
     part_label="$1"
     if [ -f /proc/mtd ]; then
-        part_idx=$(grep "\"$part_label\"" /proc/mtd | awk -F: '{print $1}')
+        part_idx=$(grep -i "\"$part_label\"" /proc/mtd | awk -F: '{print $1}')
         if [ -n "$part_idx" ]; then
             echo "/dev/$part_idx"
             return 0
