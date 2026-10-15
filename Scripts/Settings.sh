@@ -69,7 +69,7 @@ if [[ "${WRT_TARGET^^}" == *"QUALCOMMAX"* ]]; then
 	echo "CONFIG_PACKAGE_kmod-usb-serial-qualcomm=y" >> ./.config
 fi
 
-# 复制自定义 files 目录到编译工作区 (确保 dualboot 与 reset 按键脚本打包入固件)
+# Copy custom files directory to build root (embed dualboot and reset scripts into firmware)
 if [ -d "$GITHUB_WORKSPACE/files" ]; then
 	cp -rf "$GITHUB_WORKSPACE/files" ./
 	chmod +x ./files/sbin/* ./files/etc/rc.button/* 2>/dev/null || true

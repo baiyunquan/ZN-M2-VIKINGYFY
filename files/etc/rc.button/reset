@@ -10,7 +10,7 @@ timeout)
 	;;
 released)
 	if [ "$SEEN" -ge 5 ]; then
-		logger -t "button-reset" "检测到长按复位键 $SEEN 秒，正在安全回退至原厂系统 (rootfs)..."
+		logger -t "button-reset" "Reset button pressed for $SEEN seconds: Switching to stock firmware (rootfs)..."
 		echo "FACTORY FALLBACK: Switching to stock firmware (rootfs)..." > /dev/console
 		if [ -x /sbin/dualboot ]; then
 			/sbin/dualboot stock
@@ -18,7 +18,7 @@ released)
 		sync
 		reboot &
 	elif [ "$SEEN" -ge 1 ]; then
-		logger -t "button-reset" "检测到短按复位键 $SEEN 秒，重启路由器..."
+		logger -t "button-reset" "Reset button pressed for $SEEN seconds: Rebooting router..."
 		echo "REBOOT" > /dev/console
 		sync
 		reboot &
