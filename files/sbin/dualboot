@@ -34,32 +34,32 @@ TMP_IMG="/tmp/bootconfig_work.bin"
 
 case "$ACTION" in
     stock|to-stock)
-        TARGET="rootfs"
-        DESC="Stock System (rootfs)"
+        TARGET_SLOT=0
+        DESC="Stock System (Slot A - rootfs)"
         ;;
     openwrt|to-openwrt|immortalwrt)
-        TARGET="rootfs_1"
-        DESC="ImmortalWrt System (rootfs_1)"
+        TARGET_SLOT=1
+        DESC="ImmortalWrt System (Slot B - rootfs_1)"
         ;;
     status)
         if [ ! -r "$DEV_BOOTCONFIG" ]; then
             echo "Error: Cannot read bootconfig device $DEV_BOOTCONFIG"
             exit 1
         fi
-        CURR_TARGET=$(hexdump -v -s 132 -n 20 -e '"%c"' "$DEV_BOOTCONFIG" 2>/dev/null | tr -d '\0 \r\n' || echo "unknown")
+        CURR_SLOT=$(hexdump -v -s 148 -n 4 -e '"%u"' "$DEV_BOOTCONFIG" 2>/dev/null || echo "0")
         CURR_AGE=$(hexdump -v -s 4 -n 4 -e '"%u"' "$DEV_BOOTCONFIG" 2>/dev/null || echo "0")
         echo "=================================================="
         echo "       ZN-M2 Dual-Boot Status Information         "
         echo "=================================================="
-        echo "Active Boot Target   : $CURR_TARGET"
+        echo "Active Slot Index    : $CURR_SLOT"
         echo "BOOTCONFIG Counter   : $CURR_AGE"
         echo ""
-        if [ "$CURR_TARGET" = "rootfs" ]; then
+        if [ "$CURR_SLOT" = "0" ]; then
             echo "-> Next boot target  : Slot A (Stock Firmware - rootfs)"
-        elif [ "$CURR_TARGET" = "rootfs_1" ]; then
+        elif [ "$CURR_SLOT" = "1" ]; then
             echo "-> Next boot target  : Slot B (ImmortalWrt - rootfs_1)"
         else
-            echo "-> Unknown partition : $CURR_TARGET"
+            echo "-> Unknown slot      : $CURR_SLOT"
         fi
         echo "=================================================="
         echo "Usage:"
@@ -103,23 +103,26 @@ b2=$(printf '%02x' $(((NEW_AGE >> 16) & 0xff)))
 b3=$(printf '%02x' $(((NEW_AGE >> 24) & 0xff)))
 echo -ne "\\x$b0\\x$b1\\x$b2\\x$b3" | dd of="$TMP_IMG" bs=1 seek=4 count=4 conv=notrunc 2>/dev/null
 
-# 4. Write target partition name at offset 132 (0x84), padded with null bytes (20 bytes total)
-printf "%s" "$TARGET" | dd of="$TMP_IMG" bs=1 seek=132 count=${#TARGET} conv=notrunc 2>/dev/null
-PAD_LEN=$((20 - ${#TARGET}))
-if [ $PAD_LEN -gt 0 ]; then
-    dd if=/dev/zero of="$TMP_IMG" bs=1 seek=$((132 + ${#TARGET})) count=$PAD_LEN conv=notrunc 2>/dev/null
-fi
+# 4. Set partition name to 'rootfs' (16 bytes null padded) and target slot integer at offset 148
+printf "rootfs\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0" | dd of="$TMP_IMG" bs=1 seek=132 count=16 conv=notrunc 2>/dev/null
+
+s0=$(printf '%02x' $((TARGET_SLOT & 0xff)))
+s1=$(printf '%02x' $(((TARGET_SLOT >> 8) & 0xff)))
+s2=$(printf '%02x' $(((TARGET_SLOT >> 16) & 0xff)))
+s3=$(printf '%02x' $(((TARGET_SLOT >> 24) & 0xff)))
+echo -ne "\\x$s0\\x$s1\\x$s2\\x$s3" | dd of="$TMP_IMG" bs=1 seek=148 count=4 conv=notrunc 2>/dev/null
 
 # 5. Verify the generated data structure
-VERIFY_TARGET=$(hexdump -v -s 132 -n 20 -e '"%c"' "$TMP_IMG" 2>/dev/null | tr -d '\0 \r\n')
+VERIFY_NAME=$(hexdump -v -s 132 -n 16 -e '"%c"' "$TMP_IMG" 2>/dev/null | tr -d '\0 \r\n')
+VERIFY_SLOT=$(hexdump -v -s 148 -n 4 -e '"%u"' "$TMP_IMG" 2>/dev/null)
 VERIFY_AGE=$(hexdump -v -s 4 -n 4 -e '"%u"' "$TMP_IMG" 2>/dev/null)
-if [ "$VERIFY_TARGET" != "$TARGET" ] || [ "$VERIFY_AGE" != "$NEW_AGE" ]; then
-    echo "Error: Generated image verification failed ($VERIFY_TARGET != $TARGET). Aborting!"
+if [ "$VERIFY_NAME" != "rootfs" ] || [ "$VERIFY_SLOT" != "$TARGET_SLOT" ] || [ "$VERIFY_AGE" != "$NEW_AGE" ]; then
+    echo "Error: Generated image verification failed (Name: $VERIFY_NAME, Slot: $VERIFY_SLOT, Age: $VERIFY_AGE). Aborting!"
     rm -f "$TMP_IMG"
     exit 1
 fi
 
-echo "[+] Verification passed (Target: $VERIFY_TARGET, Age: $VERIFY_AGE)"
+echo "[+] Verification passed (Slot: $VERIFY_SLOT, Age: $VERIFY_AGE)"
 
 # 6. Write back to both 0:BOOTCONFIG and 0:BOOTCONFIG1
 if command -v mtd >/dev/null 2>&1; then
